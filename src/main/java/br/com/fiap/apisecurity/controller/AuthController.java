@@ -1,47 +1,54 @@
-package br.com.fiap.apisecurity.security;
+package br.com.fiap.apisecurity.controller;
 
+import br.com.fiap.apisecurity.dto.AuthDTO;
+import br.com.fiap.apisecurity.dto.RegisterDTO;
+import br.com.fiap.apisecurity.model.User;
 import br.com.fiap.apisecurity.repository.UserRepository;
 import br.com.fiap.apisecurity.service.TokenService;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
+import org.apache.coyote.Response;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.stereotype.Component;
-import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.io.IOException;
-
-@Component
-public class SecurityFilter extends OncePerRequestFilter {
-    private final TokenService tokenService;
-    private final UserRepository userRepository;
+@RestController
+@RequestMapping("/auth")
+public class AuthController {
     @Autowired
-    public SecurityFilter(TokenService tokenService, UserRepository userRepository) {
-        this.tokenService = tokenService;
-        this.userRepository = userRepository;
+    private AuthenticationManager authenticationManager;
+    @Autowired
+    private UserRepository userRepository;
+    @Autowired
+    private TokenService tokenService;
+
+    @PostMapping("/login")
+    public ResponseEntity login(@RequestBody @Valid AuthDTO authDTO) {
+        var userPwd = new UsernamePasswordAuthenticationToken(
+                authDTO.username(),
+                authDTO.password());
+        var auth = this.authenticationManager.authenticate(userPwd);
+        var token = tokenService.generateToken((User) auth.getPrincipal());
+        return ResponseEntity.ok(token);
     }
 
-    @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
-        var token = this.recoverToken(request);
-        if (token != null) {
-            var username = tokenService.validateToken(token);
-            UserDetails userDetails = this.userRepository.findByUsername(username);
-            var authentication = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-            SecurityContextHolder.getContext().setAuthentication(authentication);
+    @PostMapping("/register")
+    public ResponseEntity register(@RequestBody @Valid RegisterDTO registerDTO) {
+        if (userRepository.findByUsername(registerDTO.username()) != null) {
+            return ResponseEntity.badRequest().build();
         }
-        filterChain.doFilter(request, response);
-    }
-
-    private String recoverToken(HttpServletRequest request) {
-        var header = request.getHeader("Authorization"); // "Bearer jdhkjsdhfjghsdfghjsdhfgshdfgh"
-        if (header == null || !header.startsWith("Bearer ")) {
-            return null;
-        }
-        return header.replace("Bearer ", ""); //"jdhkjsdhfjghsdfghjsdhfgshdfgh"
+        String encryptedPwd = new BCryptPasswordEncoder()
+                .encode(registerDTO.password());
+        User newUser = new User(
+                registerDTO.username(),
+                encryptedPwd,
+                registerDTO.role());
+        userRepository.save(newUser);
+        return ResponseEntity.ok().build();
     }
 }
